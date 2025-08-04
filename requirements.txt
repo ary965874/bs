@@ -2,3 +2,5 @@ fastapi
 uvicorn
 aiohttp
 beautifulsoup4
+fastapi
+mangum
