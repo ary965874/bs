@@ -1,101 +1,85 @@
 # main.py
-
-from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse
 import requests
 from bs4 import BeautifulSoup
 import re
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 
-app = FastAPI()
+app = FastAPI(
+    title="Hubcloud Bypass API",
+    description="API to bypass Hubcloud links and extract .mkv file URLs.",
+    version="1.0.0",
+)
 
-# Root health check endpoint (required by Koyeb)
-@app.get("/")
-def health():
-    return {"status": "running"}
-
-def bypass_hubcloud(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        if r.status_code != 200:
-            return None
-    except Exception:
-        return None
-
-    soup = BeautifulSoup(r.text, 'html.parser')
-    download_btn = soup.find("a", {"id": "download"})
-    if not download_btn or not download_btn.get("href"):
-        return None
-
-    final_url = download_btn["href"]
-    if not final_url.startswith("http"):
-        final_url = "https://hubcloud.one" + final_url
-
-    try:
-        r2 = requests.get(final_url, headers=headers, timeout=10)
-        if r2.status_code != 200:
-            return None
-    except Exception:
-        return None
-
-    soup2 = BeautifulSoup(r2.text, 'html.parser')
-    for a in soup2.find_all("a", href=True):
-        href = a["href"]
-        if ".mkv" in href:
-            if not href.startswith("http"):
-                href = "https://hubcloud.one" + href
-            return href
-    return None
-
-@app.get("/api/post")
-async def fetch_post(url: str = Query(..., description="Post URL to scrape and bypass")):
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code != 200:
-            return JSONResponse({"error": f"Failed to fetch page. Status: {res.status_code}"}, status_code=500)
-    except Exception as e:
-        return JSONResponse({"error": "Fetch error", "details": str(e)}, status_code=500)
-
-    soup = BeautifulSoup(res.text, 'html.parser')
-
-    title_tag = soup.find("h1")
-    title = title_tag.get_text(strip=True) if title_tag else "Untitled"
-
-    image = None
-    img_tag = soup.select_one("div.entry-content img, img.aligncenter")
-    if img_tag:
-        image = img_tag.get("src")
-
-    stream_url = None
-    for a in soup.find_all("a", href=True):
-        text = a.get_text(strip=True).lower()
-        href = a["href"]
-        if "watch" in text and "hdstream" in href:
-            stream_url = href
-            break
-
-    download_links = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        text = a.get_text()
-        if "hubdrive.space/file/" in href:
-            match = re.search(r"(1080p|720p|480p|360p)", text, re.I)
-            if match:
-                quality = match.group(1)
-                file_id = href.strip("/").split("/")[-1]
-                drive_url = f"https://hubcloud.one/drive/{file_id}"
-                bypassed = bypass_hubcloud(drive_url)
-                download_links.append({
-                    "name": quality,
-                    "original": href,
-                    "direct": bypassed or "❌ Failed"
-                })
-
-    return {
-        "title": title,
-        "image": image,
-        "streamUrl": stream_url,
-        "bypassedLinks": download_links
+def bypass_hubcloud_logic(url: str):
+    """
+    Bypasses the Hubcloud link to find the direct .mkv file URL.
+    Returns a dictionary with 'success' status and either 'mkv_url' or 'message'.
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+    
+    try:
+        # Step 1: Get initial page
+        r = requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        
+        soup = BeautifulSoup(r.text, 'html.parser')
+        
+        # Step 2: Look for <a id="download">
+        download_btn = soup.find("a", {"id": "download"})
+        if not download_btn or not download_btn.get("href"):
+            return {"success": False, "message": "Download button not found on the initial page."}
+        
+        final_url = download_btn["href"]
+        # Ensure the URL is absolute
+        if not final_url.startswith("http"):
+            # This assumes the base domain is hubcloud.one, adjust if necessary
+            final_url = "https://hubcloud.one" + final_url 
+        
+        # Step 3: Visit the final_url page
+        r2 = requests.get(final_url, headers=headers, timeout=15)
+        r2.raise_for_status()
+        
+        soup2 = BeautifulSoup(r2.text, 'html.parser')
+        
+        # Step 4: Find all links ending in .mkv
+        all_links = soup2.find_all("a", href=True)
+        for link in all_links:
+            href = link["href"]
+            if ".mkv" in href:
+                if not href.startswith("http"):
+                    href = "https://hubcloud.one" + href
+                return {"success": True, "mkv_url": href}
+        
+        return {"success": False, "message": ".mkv file not found on the second page."}
+        
+    except requests.exceptions.RequestException as e:
+        return {"success": False, "message": f"Network or HTTP error during request: {e}"}
+    except Exception as e:
+        return {"success": False, "message": f"An unexpected error occurred: {e}"}
+
+@app.get("/")
+async def read_root():
+    """
+    Root endpoint for the API.
+    """
+    return {"message": "Welcome to the Hubcloud Bypass API! Use /bypass?url=<your_hubcloud_url> to get the .mkv link."}
+
+@app.get("/bypass")
+async def get_bypassed_url(url: str):
+    """
+    Bypasses a Hubcloud URL to find the direct .mkv file link.
+    
+    - **url**: The Hubcloud URL to bypass (e.g., `https://hubcloud.one/drive/kmj8atzuk8xzsum`).
+    """
+    if not url:
+        raise HTTPException(status_code=400, detail="URL parameter is required.")
+    
+    result = bypass_hubcloud_logic(url)
+    
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=result["message"])
+    
+    return JSONResponse(content=result)
