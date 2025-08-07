@@ -1,4 +1,6 @@
-from fastapi import FastAPI, Request, Query
+# main.py
+
+from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 import requests
 from bs4 import BeautifulSoup
@@ -6,12 +8,13 @@ import re
 
 app = FastAPI()
 
-def bypass_hubcloud(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+# Health check route for Koyeb
+@app.get("/")
+def health():
+    return {"status": "running"}
 
-    # Step 1: Load /drive/ page
+def bypass_hubcloud(url):
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code != 200:
@@ -44,12 +47,9 @@ def bypass_hubcloud(url):
             return href
     return None
 
-
 @app.get("/api/post")
 async def fetch_post(url: str = Query(..., description="Post URL to scrape and bypass")):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     try:
         res = requests.get(url, headers=headers, timeout=10)
@@ -60,17 +60,14 @@ async def fetch_post(url: str = Query(..., description="Post URL to scrape and b
 
     soup = BeautifulSoup(res.text, 'html.parser')
 
-    # Title
     title_tag = soup.find("h1")
     title = title_tag.get_text(strip=True) if title_tag else "Untitled"
 
-    # Image
     image = None
     img_tag = soup.select_one("div.entry-content img, img.aligncenter")
     if img_tag:
         image = img_tag.get("src")
 
-    # Stream URL
     stream_url = None
     for a in soup.find_all("a", href=True):
         text = a.get_text(strip=True).lower()
@@ -79,7 +76,6 @@ async def fetch_post(url: str = Query(..., description="Post URL to scrape and b
             stream_url = href
             break
 
-    # Download Links
     download_links = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -88,7 +84,6 @@ async def fetch_post(url: str = Query(..., description="Post URL to scrape and b
             match = re.search(r"(1080p|720p|480p|360p)", text, re.I)
             if match:
                 quality = match.group(1)
-                # Convert to drive url format
                 file_id = href.strip("/").split("/")[-1]
                 drive_url = f"https://hubcloud.one/drive/{file_id}"
                 bypassed = bypass_hubcloud(drive_url)
