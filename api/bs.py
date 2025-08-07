@@ -8,7 +8,7 @@ import re
 
 app = FastAPI()
 
-# Health check route for Koyeb
+# Root health check endpoint (required by Koyeb)
 @app.get("/")
 def health():
     return {"status": "running"}
