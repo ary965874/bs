@@ -1,6 +1,4 @@
 fastapi
 uvicorn
-aiohttp
+requests
 beautifulsoup4
-fastapi
-mangum
